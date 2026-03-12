@@ -2,43 +2,81 @@
 AI News Daily Bot
 毎朝8時(JST)にAI関連ニュースを収集し、マークダウン形式でBoxに保存するスクリプト
 
-【Box CCG認証 + サービスアカウントのルートに保存】
-  - CCGサービスアカウント自身のルートフォルダ(id="0")に保存
-  - as-user不要・シンプル確実
-  - 保存後、Boxの共有設定でRyoさんのアカウントからアクセス可能
+【Box JWT認証方式】
+  - Private Keyを使ってJWTトークンを自己署名
+  - Refresh Token不要・永続的に動作
+  - サービスアカウントとして企業全体にアクセス可能
 
 【必要な環境変数（GitHub Secrets）】
-  ANTHROPIC_API_KEY   : Anthropic APIキー（必須）
-  BOX_CLIENT_ID       : Box CCGアプリのClient ID（必須）
-  BOX_CLIENT_SECRET   : Box CCGアプリのClient Secret（必須）
-  BOX_ENTERPRISE_ID   : BoxのEnterprise ID（必須）
-  NEWS_API_KEY        : NewsAPI キー（任意）
+  ANTHROPIC_API_KEY       : Anthropic APIキー（必須）
+  BOX_CLIENT_ID           : BoxアプリのClient ID（必須）
+  BOX_CLIENT_SECRET       : BoxアプリのClient Secret（必須）
+  BOX_ENTERPRISE_ID       : BoxのEnterprise ID（必須）
+  BOX_PUBLIC_KEY_ID       : JWTの公開鍵ID（必須）
+  BOX_PRIVATE_KEY         : JWTの秘密鍵（必須・改行は\\nで）
+  BOX_PRIVATE_KEY_PASSPHRASE : 秘密鍵のパスフレーズ（必須）
+  BOX_USER_ID             : サービスアカウントのユーザーID（必須）
+  BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370318355595）
+  NEWS_API_KEY            : NewsAPI キー（任意）
 """
 
 import os
+import time
+import uuid
 import requests
+import jwt  # PyJWT
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from datetime import datetime, timedelta, timezone
 import anthropic
 
 JST = timezone(timedelta(hours=9))
-BOX_FOLDER_ID = "0"  # CCGサービスアカウントのルートフォルダ
+BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
 
 
-# ---- Box CCG: Access Token を取得 ----
+# ---- Box JWT: Access Token を取得 ----
 def get_box_access_token() -> str:
+    """JWTアサーションを使ってBox Access Tokenを取得する。"""
+
+    client_id     = os.environ["BOX_CLIENT_ID"]
+    client_secret = os.environ["BOX_CLIENT_SECRET"]
+    enterprise_id = os.environ["BOX_ENTERPRISE_ID"]
+    public_key_id = os.environ["BOX_PUBLIC_KEY_ID"]
+    private_key   = os.environ["BOX_PRIVATE_KEY"].replace("\\n", "\n")
+    passphrase    = os.environ["BOX_PRIVATE_KEY_PASSPHRASE"].encode()
+
+    # Private Keyを読み込む
+    key = load_pem_private_key(private_key.encode(), password=passphrase)
+
+    # JWTアサーションを作成
+    now = int(time.time())
+    claims = {
+        "iss": client_id,
+        "sub": enterprise_id,
+        "box_sub_type": "enterprise",
+        "aud": "https://api.box.com/oauth2/token",
+        "jti": str(uuid.uuid4()),
+        "exp": now + 45,
+    }
+    assertion = jwt.encode(
+        claims,
+        key,
+        algorithm="RS256",
+        headers={"kid": public_key_id},
+    )
+
+    # Access Tokenを取得
     res = requests.post(
         "https://api.box.com/oauth2/token",
         data={
-            "grant_type":    "client_credentials",
-            "client_id":     os.environ["BOX_CLIENT_ID"],
-            "client_secret": os.environ["BOX_CLIENT_SECRET"],
-            "box_subject_type": "enterprise",
-            "box_subject_id":   os.environ["BOX_ENTERPRISE_ID"],
+            "grant_type":  "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion":   assertion,
+            "client_id":     client_id,
+            "client_secret": client_secret,
         },
         timeout=10,
     )
     res.raise_for_status()
-    print("✅ Box Access Token 取得完了（CCG）")
+    print("✅ Box Access Token 取得完了（JWT）")
     return res.json()["access_token"]
 
 
@@ -153,13 +191,15 @@ def generate_markdown(articles: list[dict] | None) -> str:
     ).strip()
 
 
-# ---- ③ Box に保存（CCGのルートフォルダに直接） ----
+# ---- ③ Box に保存 ----
 def save_to_box(markdown: str, filename: str, access_token: str) -> str:
     content = markdown.encode("utf-8")
-    headers = {"Authorization": f"Bearer {access_token}"}
-    attrs   = f'{{"name":"{filename}","parent":{{"id":"{BOX_FOLDER_ID}"}}}}'
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "As-User": os.environ["BOX_USER_ID"],  # サービスアカウントのユーザーIDとして操作
+    }
+    attrs = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
 
-    # まず新規アップロード
     res = requests.post(
         "https://upload.box.com/api/2.0/files/content",
         headers=headers,
@@ -169,24 +209,26 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
         },
         timeout=30,
     )
-    print(f"   アップロード応答: {res.status_code}")
 
     # 409: 同名ファイルあり → 上書き
     if res.status_code == 409:
         print("   同名ファイルあり → 上書き中...")
-        # レスポンスからfile_idを直接取得
-        conflict_data = res.json()
-        file_id = None
-        try:
-            file_id = conflict_data["context_info"]["conflicts"]["id"]
-        except (KeyError, TypeError):
-            pass
-        if not file_id:
-            try:
-                file_id = conflict_data["context_info"]["conflicts"][0]["id"]
-            except (KeyError, TypeError, IndexError):
-                pass
-
+        search_res = requests.get(
+            "https://api.box.com/2.0/search",
+            headers=headers,
+            params={
+                "query": filename,
+                "ancestor_folder_ids": BOX_ARCHIVE_FOLDER_ID,
+                "type": "file",
+                "limit": 5,
+            },
+            timeout=10,
+        )
+        search_res.raise_for_status()
+        file_id = next(
+            (e["id"] for e in search_res.json().get("entries", []) if e["name"] == filename),
+            None,
+        )
         if file_id:
             res = requests.post(
                 f"https://upload.box.com/api/2.0/files/{file_id}/content",
@@ -198,10 +240,9 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
                 timeout=30,
             )
         else:
-            # file_idが取れない場合は時刻サフィックスで新規保存
             ts       = datetime.now(JST).strftime("%H%M%S")
             filename = filename.replace(".md", f"_{ts}.md")
-            attrs    = f'{{"name":"{filename}","parent":{{"id":"{BOX_FOLDER_ID}"}}}}'
+            attrs    = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
             res = requests.post(
                 "https://upload.box.com/api/2.0/files/content",
                 headers=headers,
@@ -223,7 +264,7 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
 def main():
     print(f"📰 AI News Bot 開始: {datetime.now(JST).strftime('%Y-%m-%d %H:%M JST')}")
 
-    print("🔑 Box Access Token 取得中（CCG）...")
+    print("🔑 Box Access Token 取得中（JWT）...")
     access_token = get_box_access_token()
 
     print("🔍 ニュース収集中...")
