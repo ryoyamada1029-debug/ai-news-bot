@@ -3,19 +3,18 @@ AI News Daily Bot
 毎朝8時(JST)にAI関連ニュースを収集し、マークダウン形式でBoxに保存するスクリプト
 
 【Box OAuth2 Refresh Token方式】
-  - 一度だけ手動認証してRefresh Tokenを取得
-  - 実行のたびにAccess Tokenを自動更新
-  - Refresh Tokenも自動更新してGitHub Secretsに書き戻す
+  - Refresh Tokenは60日有効
+  - Access Tokenは実行のたびに自動取得（Refresh Tokenは使い捨て・更新不要）
+  - ※ Box OAuth2は実行ごとに新しいRefresh Tokenを返すが、
+      旧Refresh Tokenも60日間有効なため、毎日1回の実行なら問題なし
 
 【必要な環境変数（GitHub Secrets）】
   ANTHROPIC_API_KEY       : Anthropic APIキー（必須）
   BOX_CLIENT_ID           : BoxアプリのClient ID（必須）
   BOX_CLIENT_SECRET       : BoxアプリのClient Secret（必須）
-  BOX_REFRESH_TOKEN       : Box OAuth2 Refresh Token（必須・自動更新）
+  BOX_REFRESH_TOKEN       : Box OAuth2 Refresh Token（必須・60日有効）
   BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370318355595）
   NEWS_API_KEY            : NewsAPI キー（任意）
-
-  ※ GITHUB_TOKEN・GITHUB_REPOSITORY はGitHub Actionsが自動提供
 """
 
 import os
@@ -27,78 +26,22 @@ JST = timezone(timedelta(hours=9))
 BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
 
 
-# ---- Box OAuth2: Access Token を自動更新 ----
-def refresh_box_token() -> str:
-    """
-    Refresh TokenでAccess Tokenを取得し、
-    新しいRefresh TokenをGitHub Secretsに書き戻す。
-    """
-    client_id     = os.environ["BOX_CLIENT_ID"]
-    client_secret = os.environ["BOX_CLIENT_SECRET"]
-    refresh_token = os.environ["BOX_REFRESH_TOKEN"]
-
+# ---- Box OAuth2: Access Token を取得 ----
+def get_box_access_token() -> str:
+    """Refresh TokenでAccess Tokenを取得する。"""
     res = requests.post(
         "https://api.box.com/oauth2/token",
         data={
             "grant_type":    "refresh_token",
-            "refresh_token": refresh_token,
-            "client_id":     client_id,
-            "client_secret": client_secret,
+            "refresh_token": os.environ["BOX_REFRESH_TOKEN"],
+            "client_id":     os.environ["BOX_CLIENT_ID"],
+            "client_secret": os.environ["BOX_CLIENT_SECRET"],
         },
         timeout=10,
     )
     res.raise_for_status()
-    data = res.json()
-
-    new_access_token  = data["access_token"]
-    new_refresh_token = data["refresh_token"]
-    print("✅ Box Access Token 更新完了")
-
-    # 新しいRefresh TokenをGitHub Secretsに書き戻す
-    _update_github_secret("BOX_REFRESH_TOKEN", new_refresh_token)
-
-    return new_access_token
-
-
-def _update_github_secret(secret_name: str, secret_value: str) -> None:
-    """GitHub Secrets を GitHub API 経由で更新する。"""
-    import base64
-    from nacl import encoding, public  # PyNaCl for secret encryption
-
-    token = os.environ["GITHUB_TOKEN"]
-    repo  = os.environ["GITHUB_REPOSITORY"]
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-    # リポジトリの公開鍵を取得
-    res = requests.get(
-        f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
-        headers=headers, timeout=10,
-    )
-    res.raise_for_status()
-    key_data   = res.json()
-    key_id     = key_data["key_id"]
-    public_key = key_data["key"]
-
-    # libsodium で暗号化
-    pk  = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder())
-    box = public.SealedBox(pk)
-    encrypted = base64.b64encode(
-        box.encrypt(secret_value.encode("utf-8"))
-    ).decode("utf-8")
-
-    # Secretを更新
-    res = requests.put(
-        f"https://api.github.com/repos/{repo}/actions/secrets/{secret_name}",
-        headers=headers,
-        json={"encrypted_value": encrypted, "key_id": key_id},
-        timeout=10,
-    )
-    res.raise_for_status()
-    print(f"✅ GitHub Secret [{secret_name}] 更新完了")
+    print("✅ Box Access Token 取得完了")
+    return res.json()["access_token"]
 
 
 # ---- ① ニュース収集 (NewsAPI) ----
@@ -214,9 +157,9 @@ def generate_markdown(articles: list[dict] | None) -> str:
 
 # ---- ③ Box に保存 ----
 def save_to_box(markdown: str, filename: str, access_token: str) -> str:
-    content  = markdown.encode("utf-8")
-    headers  = {"Authorization": f"Bearer {access_token}"}
-    attrs    = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
+    content = markdown.encode("utf-8")
+    headers = {"Authorization": f"Bearer {access_token}"}
+    attrs   = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
 
     res = requests.post(
         "https://upload.box.com/api/2.0/files/content",
@@ -253,8 +196,8 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
 def main():
     print(f"📰 AI News Bot 開始: {datetime.now(JST).strftime('%Y-%m-%d %H:%M JST')}")
 
-    print("🔑 Box Token 更新中...")
-    access_token = refresh_box_token()
+    print("🔑 Box Access Token 取得中...")
+    access_token = get_box_access_token()
 
     print("🔍 ニュース収集中...")
     articles = fetch_ai_news_via_newsapi()
