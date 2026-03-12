@@ -33,3 +33,5 @@ jobs:
           BOX_REFRESH_TOKEN:     ${{ secrets.BOX_REFRESH_TOKEN }}
           BOX_ARCHIVE_FOLDER_ID: "370318355595"
           NEWS_API_KEY:          ${{ secrets.NEWS_API_KEY }}
+          GH_PAT:                ${{ secrets.GH_PAT }}
+          GITHUB_REPOSITORY:     ${{ github.repository }}
