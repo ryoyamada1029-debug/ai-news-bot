@@ -158,7 +158,11 @@ def generate_markdown(articles: list[dict] | None) -> str:
 # ---- ③ Box に保存 ----
 def save_to_box(markdown: str, filename: str, access_token: str) -> str:
     content = markdown.encode("utf-8")
+    # CCGサービスアカウントとして動作する際、as-userヘッダーでRyoさんのアカウントとして操作
+    box_user_id = os.environ.get("BOX_USER_ID", "")
     headers = {"Authorization": f"Bearer {access_token}"}
+    if box_user_id:
+        headers["As-User"] = box_user_id
     attrs   = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
 
     res = requests.post(
