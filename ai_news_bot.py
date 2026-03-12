@@ -2,18 +2,17 @@
 AI News Daily Bot
 毎朝8時(JST)にAI関連ニュースを収集し、マークダウン形式でBoxに保存するスクリプト
 
-【Box CCG（Client Credentials Grant）認証方式】
-  - Refresh Token不要・無効化の問題なし
-  - Client ID + Client Secret だけで永続的に動作
-  - Tokenは自動取得（有効期限60分・毎回新規取得）
+【Box CCG認証 + サービスアカウントのルートに保存】
+  - CCGサービスアカウント自身のルートフォルダ(id="0")に保存
+  - as-user不要・シンプル確実
+  - 保存後、Boxの共有設定でRyoさんのアカウントからアクセス可能
 
 【必要な環境変数（GitHub Secrets）】
-  ANTHROPIC_API_KEY       : Anthropic APIキー（必須）
-  BOX_CLIENT_ID           : Box CCGアプリのClient ID（必須）
-  BOX_CLIENT_SECRET       : Box CCGアプリのClient Secret（必須）
-  BOX_ENTERPRISE_ID       : BoxのEnterprise ID（必須）
-  BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370318355595）
-  NEWS_API_KEY            : NewsAPI キー（任意）
+  ANTHROPIC_API_KEY   : Anthropic APIキー（必須）
+  BOX_CLIENT_ID       : Box CCGアプリのClient ID（必須）
+  BOX_CLIENT_SECRET   : Box CCGアプリのClient Secret（必須）
+  BOX_ENTERPRISE_ID   : BoxのEnterprise ID（必須）
+  NEWS_API_KEY        : NewsAPI キー（任意）
 """
 
 import os
@@ -22,12 +21,11 @@ from datetime import datetime, timedelta, timezone
 import anthropic
 
 JST = timezone(timedelta(hours=9))
-BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
+BOX_FOLDER_ID = "0"  # CCGサービスアカウントのルートフォルダ
 
 
 # ---- Box CCG: Access Token を取得 ----
 def get_box_access_token() -> str:
-    """CCGでAccess Tokenを取得する。Refresh Token不要。"""
     res = requests.post(
         "https://api.box.com/oauth2/token",
         data={
@@ -155,16 +153,13 @@ def generate_markdown(articles: list[dict] | None) -> str:
     ).strip()
 
 
-# ---- ③ Box に保存 ----
+# ---- ③ Box に保存（CCGのルートフォルダに直接） ----
 def save_to_box(markdown: str, filename: str, access_token: str) -> str:
     content = markdown.encode("utf-8")
-    # CCGサービスアカウントとして動作する際、as-userヘッダーでRyoさんのアカウントとして操作
-    box_user_id = os.environ.get("BOX_USER_ID", "")
     headers = {"Authorization": f"Bearer {access_token}"}
-    if box_user_id:
-        headers["As-User"] = box_user_id
-    attrs   = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
+    attrs   = f'{{"name":"{filename}","parent":{{"id":"{BOX_FOLDER_ID}"}}}}'
 
+    # まず新規アップロード
     res = requests.post(
         "https://upload.box.com/api/2.0/files/content",
         headers=headers,
@@ -174,26 +169,24 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
         },
         timeout=30,
     )
+    print(f"   アップロード応答: {res.status_code}")
 
-    # 409: 同名ファイルあり → Search APIでfile_idを取得して上書き
+    # 409: 同名ファイルあり → 上書き
     if res.status_code == 409:
         print("   同名ファイルあり → 上書き中...")
-        search_res = requests.get(
-            "https://api.box.com/2.0/search",
-            headers=headers,
-            params={
-                "query": filename,
-                "ancestor_folder_ids": BOX_ARCHIVE_FOLDER_ID,
-                "type": "file",
-                "limit": 5,
-            },
-            timeout=10,
-        )
-        search_res.raise_for_status()
-        file_id = next(
-            (e["id"] for e in search_res.json().get("entries", []) if e["name"] == filename),
-            None,
-        )
+        # レスポンスからfile_idを直接取得
+        conflict_data = res.json()
+        file_id = None
+        try:
+            file_id = conflict_data["context_info"]["conflicts"]["id"]
+        except (KeyError, TypeError):
+            pass
+        if not file_id:
+            try:
+                file_id = conflict_data["context_info"]["conflicts"][0]["id"]
+            except (KeyError, TypeError, IndexError):
+                pass
+
         if file_id:
             res = requests.post(
                 f"https://upload.box.com/api/2.0/files/{file_id}/content",
@@ -205,9 +198,10 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
                 timeout=30,
             )
         else:
+            # file_idが取れない場合は時刻サフィックスで新規保存
             ts       = datetime.now(JST).strftime("%H%M%S")
             filename = filename.replace(".md", f"_{ts}.md")
-            attrs    = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
+            attrs    = f'{{"name":"{filename}","parent":{{"id":"{BOX_FOLDER_ID}"}}}}'
             res = requests.post(
                 "https://upload.box.com/api/2.0/files/content",
                 headers=headers,
