@@ -5,8 +5,11 @@ on:
     - cron: '0 23 * * *'  # UTC 23:00 = JST 08:00
   workflow_dispatch:
 
+permissions:
+  contents: write   # GitHubへのコミットに必要
+
 jobs:
-  save-ai-news-to-box:
+  save-ai-news:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -27,7 +30,8 @@ jobs:
       - name: Run AI News Bot
         run: python ai_news_bot.py
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          BOX_ACCESS_TOKEN:  ${{ secrets.BOX_ACCESS_TOKEN }}   # ← 追加
-          NEWS_API_KEY:      ${{ secrets.NEWS_API_KEY }}        # 任意
+          ANTHROPIC_API_KEY:     ${{ secrets.ANTHROPIC_API_KEY }}
+          BOX_ACCESS_TOKEN:      ${{ secrets.BOX_ACCESS_TOKEN }}      # 任意（あればBoxに保存）
           BOX_ARCHIVE_FOLDER_ID: "370318355595"
+          NEWS_API_KEY:          ${{ secrets.NEWS_API_KEY }}          # 任意
+          GITHUB_TOKEN:          ${{ secrets.GITHUB_TOKEN }}          # 自動提供・登録不要
