@@ -1,20 +1,6 @@
 """
 AI News Daily Bot
 毎朝8時(JST)にAI関連ニュースを収集し、マークダウン形式でBoxに保存するスクリプト
-
-【Box OAuth2 Refresh Token方式】
-  - Refresh Tokenは60日有効
-  - Access Tokenは実行のたびに自動取得（Refresh Tokenは使い捨て・更新不要）
-  - ※ Box OAuth2は実行ごとに新しいRefresh Tokenを返すが、
-      旧Refresh Tokenも60日間有効なため、毎日1回の実行なら問題なし
-
-【必要な環境変数（GitHub Secrets）】
-  ANTHROPIC_API_KEY       : Anthropic APIキー（必須）
-  BOX_CLIENT_ID           : BoxアプリのClient ID（必須）
-  BOX_CLIENT_SECRET       : BoxアプリのClient Secret（必須）
-  BOX_REFRESH_TOKEN       : Box OAuth2 Refresh Token（必須・60日有効）
-  BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370318355595）
-  NEWS_API_KEY            : NewsAPI キー（任意）
 """
 
 import os
@@ -28,7 +14,6 @@ BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
 
 # ---- Box OAuth2: Access Token を取得 ----
 def get_box_access_token() -> str:
-    """Refresh TokenでAccess Tokenを取得する。"""
     res = requests.post(
         "https://api.box.com/oauth2/token",
         data={
@@ -161,6 +146,7 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
     headers = {"Authorization": f"Bearer {access_token}"}
     attrs   = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
 
+    # まず新規アップロードを試みる
     res = requests.post(
         "https://upload.box.com/api/2.0/files/content",
         headers=headers,
@@ -171,19 +157,58 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
         timeout=30,
     )
 
-    # 同名ファイルが既にある場合は上書き
+    # 409: 同名ファイルが既に存在 → Search APIでfile_idを取得して上書き
     if res.status_code == 409:
-        file_id = res.json()["context_info"]["conflicts"][0]["id"]
-        print(f"   同名ファイルあり → 上書き (id: {file_id})")
-        res = requests.post(
-            f"https://upload.box.com/api/2.0/files/{file_id}/content",
+        print("   同名ファイルあり → 既存ファイルを検索中...")
+
+        # Box Search APIでファイルIDを取得
+        search_res = requests.get(
+            "https://api.box.com/2.0/search",
             headers=headers,
-            files={
-                "attributes": (None, attrs, "application/json"),
-                "file":       (filename, content, "text/markdown"),
+            params={
+                "query": filename,
+                "ancestor_folder_ids": BOX_ARCHIVE_FOLDER_ID,
+                "type": "file",
+                "limit": 5,
             },
-            timeout=30,
+            timeout=10,
         )
+        search_res.raise_for_status()
+        entries = search_res.json().get("entries", [])
+
+        # 完全一致するファイル名のIDを探す
+        file_id = None
+        for entry in entries:
+            if entry["name"] == filename:
+                file_id = entry["id"]
+                break
+
+        if file_id:
+            print(f"   上書き (file_id: {file_id})")
+            res = requests.post(
+                f"https://upload.box.com/api/2.0/files/{file_id}/content",
+                headers=headers,
+                files={
+                    "attributes": (None, attrs, "application/json"),
+                    "file":       (filename, content, "text/markdown"),
+                },
+                timeout=30,
+            )
+        else:
+            # ファイルが見つからない場合はリネームして新規保存
+            now_suffix = datetime.now(JST).strftime("%H%M%S")
+            filename   = filename.replace(".md", f"_{now_suffix}.md")
+            attrs      = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
+            print(f"   ファイルID不明 → リネームして保存: {filename}")
+            res = requests.post(
+                "https://upload.box.com/api/2.0/files/content",
+                headers=headers,
+                files={
+                    "attributes": (None, attrs, "application/json"),
+                    "file":       (filename, content, "text/markdown"),
+                },
+                timeout=30,
+            )
 
     res.raise_for_status()
     file_id  = res.json()["entries"][0]["id"]
