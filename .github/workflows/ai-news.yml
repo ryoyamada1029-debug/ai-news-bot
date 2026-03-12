@@ -2,18 +2,15 @@ name: 🤖 AI News Daily
 
 on:
   schedule:
-    # UTC 23:00 = JST 08:00（毎朝8時）
-    - cron: '0 23 * * *'
-  # 手動実行ボタン（テスト用）
+    - cron: '0 23 * * *'  # UTC 23:00 = JST 08:00
   workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # Node.js 24を強制使用
 
 jobs:
   save-ai-news-to-box:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # ← jobsの中のenvに書く
 
     steps:
       - name: Checkout
@@ -31,5 +28,5 @@ jobs:
         run: python ai_news_bot.py
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}   # 任意
-          BOX_ARCHIVE_FOLDER_ID: "370318355595"       # AI News Archive
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          BOX_ARCHIVE_FOLDER_ID: "370318355595"
