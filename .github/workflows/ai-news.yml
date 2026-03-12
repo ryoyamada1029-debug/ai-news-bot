@@ -31,5 +31,6 @@ jobs:
           BOX_CLIENT_ID:         ${{ secrets.BOX_CLIENT_ID }}
           BOX_CLIENT_SECRET:     ${{ secrets.BOX_CLIENT_SECRET }}
           BOX_ENTERPRISE_ID:     ${{ secrets.BOX_ENTERPRISE_ID }}
-          BOX_ARCHIVE_FOLDER_ID: ${{ secrets.BOX_ARCHIVE_FOLDER_ID }}
+          BOX_USER_ID:           ${{ secrets.BOX_USER_ID }}
+          BOX_ARCHIVE_FOLDER_ID: "370318355595"
           NEWS_API_KEY:          ${{ secrets.NEWS_API_KEY }}
