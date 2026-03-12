@@ -1,21 +1,22 @@
 """
 AI News Daily Bot
-毎朝8時(JST)にAI関連ニュースを収集し、マークダウン形式でBoxに保存するスクリプト
+毎朝8時(JST)にAI関連ニュースを収集し、マークダウン形式で保存するスクリプト
+
+【保存先の優先順位】
+  1. Box（BOX_ACCESS_TOKEN が設定されていれば）
+  2. GitHub リポジトリの archive/ フォルダ（フォールバック）
 
 【必要な環境変数】
-  ANTHROPIC_API_KEY  : Anthropic APIキー（必須）
-  BOX_ACCESS_TOKEN   : Box Developer Token または OAuth2 Access Token（必須）
-  NEWS_API_KEY       : NewsAPI キー（任意）
-  BOX_ARCHIVE_FOLDER_ID : 保存先フォルダID（デフォルト: 370318355595）
-
-【Box フォルダ構成】
-AI News Archive/
-  └── 2026-03-12_ai_news.md
-  └── 2026-03-13_ai_news.md  ...
+  ANTHROPIC_API_KEY     : Anthropic APIキー（必須）
+  BOX_ACCESS_TOKEN      : Box Developer Token（任意）
+  BOX_ARCHIVE_FOLDER_ID : Box保存先フォルダID（デフォルト: 370318355595）
+  NEWS_API_KEY          : NewsAPI キー（任意）
+  GITHUB_TOKEN          : GitHub Actionsが自動提供（設定不要）
+  GITHUB_REPOSITORY     : GitHub Actionsが自動提供（設定不要）
 """
 
 import os
-import re
+import base64
 import requests
 from datetime import datetime, timedelta, timezone
 import anthropic
@@ -29,7 +30,6 @@ def fetch_ai_news_via_newsapi() -> list[dict] | None:
     api_key = os.environ.get("NEWS_API_KEY")
     if not api_key:
         return None
-
     yesterday = (datetime.now(JST) - timedelta(days=1)).strftime("%Y-%m-%d")
     url = (
         "https://newsapi.org/v2/everything"
@@ -135,29 +135,21 @@ def generate_markdown(articles: list[dict] | None) -> str:
     ).strip()
 
 
-# ---- ③ Box API に直接アップロード ----
-def save_to_box(markdown: str) -> str | None:
-    """
-    Box Content API を直接呼んでファイルをアップロードする。
-    Box MCPは使わない（GitHub Actionsから認証できないため）。
-    """
-    token    = os.environ.get("BOX_ACCESS_TOKEN")
+# ---- ③-A Box に保存 ----
+def save_to_box(markdown: str, filename: str) -> str | None:
+    token = os.environ.get("BOX_ACCESS_TOKEN")
     if not token:
-        print("⚠️ BOX_ACCESS_TOKEN が未設定です")
+        print("   BOX_ACCESS_TOKEN 未設定 → スキップ")
         return None
 
-    today    = datetime.now(JST).strftime("%Y-%m-%d")
-    filename = f"{today}_ai_news.md"
-    content  = markdown.encode("utf-8")
-
-    # multipart/form-data でアップロード
-    url = "https://upload.box.com/api/2.0/files/content"
+    content = markdown.encode("utf-8")
     headers = {"Authorization": f"Bearer {token}"}
-    attributes = f'{{"name": "{filename}", "parent": {{"id": "{BOX_ARCHIVE_FOLDER_ID}"}}}}'
+    attributes = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
 
     try:
+        # 新規アップロード
         res = requests.post(
-            url,
+            "https://upload.box.com/api/2.0/files/content",
             headers=headers,
             files={
                 "attributes": (None, attributes, "application/json"),
@@ -166,10 +158,10 @@ def save_to_box(markdown: str) -> str | None:
             timeout=30,
         )
 
-        # 同名ファイルが既にある場合は上書き（409 Conflict）
+        # 同名ファイルが既にある場合は上書き
         if res.status_code == 409:
             file_id = res.json()["context_info"]["conflicts"][0]["id"]
-            print(f"   同名ファイルが存在 → 上書き (file_id: {file_id})")
+            print(f"   同名ファイルあり → 上書き (id: {file_id})")
             res = requests.post(
                 f"https://upload.box.com/api/2.0/files/{file_id}/content",
                 headers=headers,
@@ -181,17 +173,54 @@ def save_to_box(markdown: str) -> str | None:
             )
 
         res.raise_for_status()
-        file_data = res.json()["entries"][0]
-        file_id   = file_data["id"]
-        file_url  = f"https://app.box.com/file/{file_id}"
+        file_id  = res.json()["entries"][0]["id"]
+        file_url = f"https://app.box.com/file/{file_id}"
         print(f"✅ Box保存完了: {file_url}")
         return file_url
 
+    except requests.HTTPError as e:
+        status = e.response.status_code if e.response is not None else "?"
+        body   = e.response.text[:200] if e.response is not None else ""
+        print(f"⚠️ Box保存エラー ({status}): {body}")
+        return None
     except Exception as e:
         print(f"⚠️ Box保存エラー: {e}")
-        if hasattr(e, "response") and e.response is not None:
-            print(f"   レスポンス: {e.response.text[:300]}")
         return None
+
+
+# ---- ③-B GitHub リポジトリに保存（フォールバック） ----
+def save_to_github(markdown: str, filename: str) -> str:
+    token = os.environ["GITHUB_TOKEN"]
+    repo  = os.environ["GITHUB_REPOSITORY"]
+    path  = f"archive/{filename}"
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    api_url = f"https://api.github.com/repos/{repo}/contents/{path}"
+
+    # 既存ファイルのSHAを取得（上書き時に必要）
+    sha = None
+    res = requests.get(api_url, headers=headers, timeout=10)
+    if res.status_code == 200:
+        sha = res.json()["sha"]
+
+    body = {
+        "message": f"📰 AI News {filename.replace('_ai_news.md','')}",
+        "content": base64.b64encode(markdown.encode("utf-8")).decode("ascii"),
+        "committer": {"name": "AI News Bot", "email": "bot@example.com"},
+    }
+    if sha:
+        body["sha"] = sha
+
+    res = requests.put(api_url, headers=headers, json=body, timeout=10)
+    res.raise_for_status()
+
+    file_url = res.json()["content"]["html_url"]
+    print(f"✅ GitHub保存完了: {file_url}")
+    return file_url
 
 
 # ---- メイン ----
@@ -209,10 +238,15 @@ def main():
     print(markdown[:400], "\n...")
     print("-------------------------")
 
-    print("📦 Boxに保存中...")
-    box_url = save_to_box(markdown)
-    if not box_url:
-        raise RuntimeError("Box保存に失敗しました")  # exit code 1 で通知
+    today    = datetime.now(JST).strftime("%Y-%m-%d")
+    filename = f"{today}_ai_news.md"
+
+    # Box → 失敗したら GitHub にフォールバック
+    print("💾 保存中...")
+    result = save_to_box(markdown, filename)
+    if not result:
+        print("   → GitHubリポジトリに切り替えて保存します")
+        save_to_github(markdown, filename)
 
     print("🎉 完了!")
 
