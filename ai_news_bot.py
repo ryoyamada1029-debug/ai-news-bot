@@ -41,7 +41,15 @@ def get_box_access_token() -> str:
     client_secret = os.environ["BOX_CLIENT_SECRET"]
     enterprise_id = os.environ["BOX_ENTERPRISE_ID"]
     public_key_id = os.environ["BOX_PUBLIC_KEY_ID"]
-    private_key   = os.environ["BOX_PRIVATE_KEY"].replace("\\n", "\n")
+    # 改行の正規化（GitHub Secretsの登録方法によって異なる）
+    private_key = os.environ["BOX_PRIVATE_KEY"]
+    # \n リテラルを実際の改行に変換
+    if "\\n" in private_key:
+        private_key = private_key.replace("\\n", "\n")
+    # ヘッダー・フッターの前後にも改行を確保
+    private_key = private_key.strip()
+    if not private_key.endswith("\n"):
+        private_key = private_key + "\n"
     passphrase    = os.environ["BOX_PRIVATE_KEY_PASSPHRASE"].encode()
 
     # Private Keyを読み込む
@@ -117,71 +125,98 @@ def generate_markdown(articles: list[dict] | None) -> str:
     today_jp = datetime.now(JST).strftime("%Y年%m月%d日")
     now_str  = datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
 
+    # 共通のシステムコンテキスト
+    system_context = """あなたはBox Japan・エンタープライズSaaS領域の専門アナリストです。
+
+【読者】
+- Box Consultingのコンサルタント・SAチーム（一次読者）
+- エンタープライズ企業のIT担当者・経営層（共有先）
+
+【評価の4軸】
+1. Box事業への影響：Box AI・競合SaaS（M365/SharePoint/Google Drive/Dropbox）との差別化に関わるか
+2. 顧客提案への活用：日本の大手企業との商談・提案資料で使えるトピックか
+3. 日本市場での実用性：日本語対応・日本企業の導入事例・国内規制に関わるか
+4. 技術トレンドの重要度：LLM新モデル・AI Agent・RAGなどエンタープライズ活用に直結するか"""
+
     if articles:
         articles_text = "\n".join(
             f"- {a['title']} ({a['source']})\n  概要: {a['description']}\n  URL: {a['url']}"
             for a in articles
         )
-        prompt = f"""以下は{today_jp}の過去24時間のAI関連ニュース一覧です。
+        prompt = f"""以下は{today_jp}の過去24時間のAI・SaaS関連ニュース一覧です。
 
-日本のビジネスパーソン（エンタープライズIT担当者）向けに、
-重要度・インパクト順にTop5を厳選し、マークダウン形式で日本語まとめを作成してください。
+{system_context}
 
-【選定基準】
-- LLM / 生成AIの新機能・新モデルリリース
-- 大企業のAI戦略・導入事例
-- AI規制・政策動向
-- セキュリティ・リスク関連
+【選定基準（優先順）】
+1. Box・競合SaaSのAI機能・戦略に直接影響する発表
+2. エンタープライズ向けLLM新モデル・新機能リリース
+3. 日本企業のAI導入事例・業務自動化ユースケース
+4. AI規制・データガバナンス・セキュリティ動向（日本・EU・米国）
+5. Microsoft Copilot / Google Workspace AI など競合エコシステムの動向
 
 ニュース一覧:
 {articles_text}
 
 【出力フォーマット（厳守）】
-# AI Daily News — {today_jp}
+# 📰 AI & SaaS Daily — {today_jp}
 
-## 1. [ニュースタイトル（日本語）]
-**要約:** 2〜3行の要約。ビジネスへの影響を含めて。
-**ソース:** [ソース名](URL)
+## 1. [ニュースタイトル（日本語・30文字以内）]
+**概要:** 何が起きたか2文以内で端的に。
+**Box/提案への示唆:** 商談・提案で使えるポイント、またはBoxへの影響を1〜2文で。
+**ソース:** [媒体名](URL)
 
-## 2. ...（以下同様、5件まで）
-
----
-## 収集元ニュース一覧
-1. [タイトル](URL) — ソース名
+（## 2. 〜 ## 5. も同じ形式）
 
 ---
-*生成日時: {now_str} / Powered by Claude AI*"""
+### 💡 今日のポイント
+Box Consultingとして今週・今月注目すべきトレンドを3〜4行で総括。
+「〇〇という流れが加速しており、□□な提案機会につながる」という形式で締める。
+
+---
+### 🔗 収集元ニュース一覧
+（NewsAPIで取得した全件をリスト形式で記載）
+
+---
+*{now_str} / Box Consulting AI Digest*"""
 
         message = client.messages.create(
             model="claude-opus-4-5",
-            max_tokens=2500,
+            max_tokens=3000,
             messages=[{"role": "user", "content": prompt}],
         )
     else:
-        prompt = f"""今日（{today_jp}）の過去24時間のAI・生成AIニュースTop5を調べ、
-日本のビジネスパーソン（エンタープライズIT担当者）向けにマークダウン形式でまとめてください。
+        prompt = f"""今日（{today_jp}）の過去24時間のAI・SaaS関連ニュースを調査し、まとめてください。
 
-【調査対象】
-- OpenAI / Anthropic / Google / Microsoft / Meta のAI動向
-- 日本企業のAI導入・活用事例
-- AI規制・政策（日本・EU・米国）
-- LLM新モデル・新機能リリース
+{system_context}
+
+【調査対象（優先順）】
+1. Box / OneDrive / SharePoint / Google Drive / Dropbox のAI機能・戦略発表
+2. OpenAI / Anthropic / Google / Microsoft / Meta のエンタープライズ向けAI動向
+3. 日本企業のAI導入・活用事例（製造・金融・商社・流通など大手企業）
+4. AI規制・データガバナンス・個人情報保護（日本・EU・米国）
+5. エンタープライズ向けAI Agent・RAG・セキュリティ関連動向
 
 【出力フォーマット（厳守）】
-# AI Daily News — {today_jp}
+# 📰 AI & SaaS Daily — {today_jp}
 
-## 1. [ニュースタイトル（日本語）]
-**要約:** 2〜3行の要約。ビジネスへの影響を含めて。
-**ソース:** [ソース名](URL)
+## 1. [ニュースタイトル（日本語・30文字以内）]
+**概要:** 何が起きたか2文以内で端的に。
+**Box/提案への示唆:** 商談・提案で使えるポイント、またはBoxへの影響を1〜2文で。
+**ソース:** [媒体名](URL)
 
-## 2. ...（以下同様、5件まで）
+（## 2. 〜 ## 5. も同じ形式）
 
 ---
-*生成日時: {now_str} / Powered by Claude AI*"""
+### 💡 今日のポイント
+Box Consultingとして今週・今月注目すべきトレンドを3〜4行で総括。
+「〇〇という流れが加速しており、□□な提案機会につながる」という形式で締める。
+
+---
+*{now_str} / Box Consulting AI Digest*"""
 
         message = client.messages.create(
             model="claude-opus-4-5",
-            max_tokens=2500,
+            max_tokens=3000,
             tools=[{"type": "web_search_20250305", "name": "web_search"}],
             messages=[{"role": "user", "content": prompt}],
         )
