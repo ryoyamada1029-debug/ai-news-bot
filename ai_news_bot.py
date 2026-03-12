@@ -2,25 +2,21 @@
 AI News Daily Bot
 毎朝8時(JST)にAI関連ニュースを収集し、マークダウン形式でBoxに保存するスクリプト
 
-【Box OAuth2 Refresh Token自動更新方式】
-  - 実行のたびにRefresh TokenでAccess Tokenを取得
-  - 新しいRefresh TokenをGitHub Secrets(PAT経由)に自動書き戻し
-  - これにより毎日自動実行しても永続的に動作する
+【Box CCG（Client Credentials Grant）認証方式】
+  - Refresh Token不要・無効化の問題なし
+  - Client ID + Client Secret だけで永続的に動作
+  - Tokenは自動取得（有効期限60分・毎回新規取得）
 
 【必要な環境変数（GitHub Secrets）】
-  ANTHROPIC_API_KEY     : Anthropic APIキー（必須）
-  BOX_CLIENT_ID         : BoxアプリのClient ID（必須）
-  BOX_CLIENT_SECRET     : BoxアプリのClient Secret（必須）
-  BOX_REFRESH_TOKEN     : Box OAuth2 Refresh Token（必須・自動更新）
-  BOX_ARCHIVE_FOLDER_ID : 保存先フォルダID（デフォルト: 370318355595）
-  GH_PAT                : GitHub Personal Access Token・secrets書き込み権限付き（必須）
-  NEWS_API_KEY          : NewsAPI キー（任意）
-
-  ※ GITHUB_REPOSITORY はGitHub Actionsが自動提供
+  ANTHROPIC_API_KEY       : Anthropic APIキー（必須）
+  BOX_CLIENT_ID           : Box CCGアプリのClient ID（必須）
+  BOX_CLIENT_SECRET       : Box CCGアプリのClient Secret（必須）
+  BOX_ENTERPRISE_ID       : BoxのEnterprise ID（必須）
+  BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370318355595）
+  NEWS_API_KEY            : NewsAPI キー（任意）
 """
 
 import os
-import base64
 import requests
 from datetime import datetime, timedelta, timezone
 import anthropic
@@ -29,68 +25,23 @@ JST = timezone(timedelta(hours=9))
 BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
 
 
-# ---- Box OAuth2: Access Token取得 & Refresh Token自動更新 ----
+# ---- Box CCG: Access Token を取得 ----
 def get_box_access_token() -> str:
-    """
-    Refresh TokenでAccess Tokenを取得し、
-    新しいRefresh TokenをGitHub Secrets(GH_PAT経由)に書き戻す。
-    """
+    """CCGでAccess Tokenを取得する。Refresh Token不要。"""
     res = requests.post(
         "https://api.box.com/oauth2/token",
         data={
-            "grant_type":    "refresh_token",
-            "refresh_token": os.environ["BOX_REFRESH_TOKEN"],
+            "grant_type":    "client_credentials",
             "client_id":     os.environ["BOX_CLIENT_ID"],
             "client_secret": os.environ["BOX_CLIENT_SECRET"],
+            "box_subject_type": "enterprise",
+            "box_subject_id":   os.environ["BOX_ENTERPRISE_ID"],
         },
         timeout=10,
     )
     res.raise_for_status()
-    data              = res.json()
-    access_token      = data["access_token"]
-    new_refresh_token = data["refresh_token"]
-    print("✅ Box Access Token 取得完了")
-
-    # 新しいRefresh TokenをGitHub Secretsに書き戻す
-    _update_github_secret("BOX_REFRESH_TOKEN", new_refresh_token)
-
-    return access_token
-
-
-def _update_github_secret(name: str, value: str) -> None:
-    """GitHub PAT経由でSecretsを更新する。"""
-    from nacl import encoding, public
-
-    pat  = os.environ["GH_PAT"]  # Personal Access Token (secrets:write権限付き)
-    repo = os.environ["GITHUB_REPOSITORY"]
-    headers = {
-        "Authorization": f"Bearer {pat}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-    # リポジトリ公開鍵を取得
-    res = requests.get(
-        f"https://api.github.com/repos/{repo}/actions/secrets/public-key",
-        headers=headers, timeout=10,
-    )
-    res.raise_for_status()
-    key_data = res.json()
-
-    # libsodiumで暗号化
-    pk        = public.PublicKey(key_data["key"].encode(), encoding.Base64Encoder())
-    box       = public.SealedBox(pk)
-    encrypted = base64.b64encode(box.encrypt(value.encode())).decode()
-
-    # Secretを更新
-    res = requests.put(
-        f"https://api.github.com/repos/{repo}/actions/secrets/{name}",
-        headers=headers,
-        json={"encrypted_value": encrypted, "key_id": key_data["key_id"]},
-        timeout=10,
-    )
-    res.raise_for_status()
-    print(f"✅ GitHub Secret [{name}] 自動更新完了")
+    print("✅ Box Access Token 取得完了（CCG）")
+    return res.json()["access_token"]
 
 
 # ---- ① ニュース収集 (NewsAPI) ----
@@ -250,7 +201,6 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
                 timeout=30,
             )
         else:
-            # 見つからない場合は時刻サフィックスをつけて新規保存
             ts       = datetime.now(JST).strftime("%H%M%S")
             filename = filename.replace(".md", f"_{ts}.md")
             attrs    = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
@@ -275,7 +225,7 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
 def main():
     print(f"📰 AI News Bot 開始: {datetime.now(JST).strftime('%Y-%m-%d %H:%M JST')}")
 
-    print("🔑 Box Access Token 取得中...")
+    print("🔑 Box Access Token 取得中（CCG）...")
     access_token = get_box_access_token()
 
     print("🔍 ニュース収集中...")
