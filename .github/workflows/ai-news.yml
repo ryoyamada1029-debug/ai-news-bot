@@ -35,5 +35,5 @@ jobs:
           BOX_PRIVATE_KEY:              ${{ secrets.BOX_PRIVATE_KEY }}
           BOX_PRIVATE_KEY_PASSPHRASE:   ${{ secrets.BOX_PRIVATE_KEY_PASSPHRASE }}
           BOX_USER_ID:                  ${{ secrets.BOX_USER_ID }}
-          BOX_ARCHIVE_FOLDER_ID:        "370318355595"
+          BOX_ARCHIVE_FOLDER_ID:        "370834602129"
           NEWS_API_KEY:                 ${{ secrets.NEWS_API_KEY }}
