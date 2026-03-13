@@ -16,7 +16,7 @@ AI News Daily Bot
   BOX_PRIVATE_KEY         : JWTの秘密鍵（必須・改行は\\nで）
   BOX_PRIVATE_KEY_PASSPHRASE : 秘密鍵のパスフレーズ（必須）
   BOX_USER_ID             : サービスアカウントのユーザーID（必須）
-  BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370318355595）
+  BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370834602129）
   NEWS_API_KEY            : NewsAPI キー（任意）
 """
 
@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 import anthropic
 
 JST = timezone(timedelta(hours=9))
-BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
+BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370834602129")
 
 
 # ---- Box JWT: Access Token を取得 ----
