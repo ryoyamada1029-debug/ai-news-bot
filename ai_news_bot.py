@@ -77,7 +77,9 @@ def get_box_access_token() -> str:
 def fetch_ai_news_via_newsapi() -> list[dict] | None:
     api_key = os.environ.get("NEWS_API_KEY")
     if not api_key:
+        print("   ℹ️ NEWS_API_KEY 未設定 → Claude web_search を使用")
         return None
+    print(f"   ℹ️ NEWS_API_KEY 確認済み（末尾4文字: ...{api_key[-4:]}）")
 
     yesterday = (datetime.now(JST) - timedelta(days=1)).strftime("%Y-%m-%d")
     url = (
@@ -100,7 +102,7 @@ def fetch_ai_news_via_newsapi() -> list[dict] | None:
             if a.get("title") and "[Removed]" not in a.get("title", "")
         ]
     except Exception as e:
-        print(f"⚠️ NewsAPI エラー: {e}")
+        print(f"   ⚠️ NewsAPI エラー詳細: {e}")
         return None
 
 
