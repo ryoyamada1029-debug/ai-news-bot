@@ -216,6 +216,7 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
         },
         timeout=30,
     )
+    print(f"   Box upload response: {res.status_code} | {res.text[:300]}")
 
     if res.status_code == 409:
         print("   同名ファイルあり → 上書き中...")
@@ -259,6 +260,8 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
                 timeout=30,
             )
 
+    if not res.ok:
+        print(f"   ⚠️ Box APIレスポンス ({res.status_code}): {res.text[:300]}")
     res.raise_for_status()
     file_id  = res.json()["entries"][0]["id"]
     file_url = f"https://app.box.com/file/{file_id}"
