@@ -29,7 +29,7 @@ from datetime import datetime, timedelta, timezone
 import anthropic
 
 JST = timezone(timedelta(hours=9))
-BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
+BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370834602129")
 
 
 # ---- Box JWT: Access Token を取得 ----
