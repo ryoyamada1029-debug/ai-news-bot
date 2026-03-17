@@ -27,13 +27,13 @@ jobs:
       - name: Run AI News Bot
         run: python ai_news_bot.py
         env:
-          GEMINI_API_KEY:               ${{ secrets.GEMINI_API_KEY }}
-          BOX_CLIENT_ID:                ${{ secrets.BOX_CLIENT_ID }}
-          BOX_CLIENT_SECRET:            ${{ secrets.BOX_CLIENT_SECRET }}
-          BOX_ENTERPRISE_ID:            ${{ secrets.BOX_ENTERPRISE_ID }}
-          BOX_PUBLIC_KEY_ID:            ${{ secrets.BOX_PUBLIC_KEY_ID }}
-          BOX_PRIVATE_KEY:              ${{ secrets.BOX_PRIVATE_KEY }}
-          BOX_PRIVATE_KEY_PASSPHRASE:   ${{ secrets.BOX_PRIVATE_KEY_PASSPHRASE }}
-          BOX_USER_ID:                  ${{ secrets.BOX_USER_ID }}
-          BOX_ARCHIVE_FOLDER_ID:        ${{ secrets.BOX_ARCHIVE_FOLDER_ID }}
-          NEWS_API_KEY:                 ${{ secrets.NEWS_API_KEY }}
+          ANTHROPIC_API_KEY:          ${{ secrets.ANTHROPIC_API_KEY }}
+          BOX_CLIENT_ID:              ${{ secrets.BOX_CLIENT_ID }}
+          BOX_CLIENT_SECRET:          ${{ secrets.BOX_CLIENT_SECRET }}
+          BOX_ENTERPRISE_ID:          ${{ secrets.BOX_ENTERPRISE_ID }}
+          BOX_PUBLIC_KEY_ID:          ${{ secrets.BOX_PUBLIC_KEY_ID }}
+          BOX_PRIVATE_KEY:            ${{ secrets.BOX_PRIVATE_KEY }}
+          BOX_PRIVATE_KEY_PASSPHRASE: ${{ secrets.BOX_PRIVATE_KEY_PASSPHRASE }}
+          BOX_USER_ID:                ${{ secrets.BOX_USER_ID }}
+          BOX_ARCHIVE_FOLDER_ID:      ${{ secrets.BOX_ARCHIVE_FOLDER_ID }}
+          NEWS_API_KEY:               ${{ secrets.NEWS_API_KEY }}
