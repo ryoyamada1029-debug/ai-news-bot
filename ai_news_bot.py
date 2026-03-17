@@ -8,7 +8,7 @@ AI News Daily Bot
   - サービスアカウントとして企業全体にアクセス可能
 
 【必要な環境変数（GitHub Secrets）】
-  ANTHROPIC_API_KEY       : Anthropic APIキー（必須）
+  GEMINI_API_KEY          : Google Gemini APIキー（必須）
   BOX_CLIENT_ID           : BoxアプリのClient ID（必須）
   BOX_CLIENT_SECRET       : BoxアプリのClient Secret（必須）
   BOX_ENTERPRISE_ID       : BoxのEnterprise ID（必須）
@@ -16,7 +16,7 @@ AI News Daily Bot
   BOX_PRIVATE_KEY         : JWTの秘密鍵（必須・改行は\\nで）
   BOX_PRIVATE_KEY_PASSPHRASE : 秘密鍵のパスフレーズ（必須）
   BOX_USER_ID             : サービスアカウントのユーザーID（必須）
-  BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370834602129）
+  BOX_ARCHIVE_FOLDER_ID   : 保存先フォルダID（デフォルト: 370318355595）
   NEWS_API_KEY            : NewsAPI キー（任意）
 """
 
@@ -27,35 +27,29 @@ import requests
 import jwt  # PyJWT
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from datetime import datetime, timedelta, timezone
-import anthropic
+import google.generativeai as genai
 
 JST = timezone(timedelta(hours=9))
-BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370834602129")
+BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
 
 
 # ---- Box JWT: Access Token を取得 ----
 def get_box_access_token() -> str:
     """JWTアサーションを使ってBox Access Tokenを取得する。"""
-
     client_id     = os.environ["BOX_CLIENT_ID"]
     client_secret = os.environ["BOX_CLIENT_SECRET"]
     enterprise_id = os.environ["BOX_ENTERPRISE_ID"]
     public_key_id = os.environ["BOX_PUBLIC_KEY_ID"]
-    # 改行の正規化（GitHub Secretsの登録方法によって異なる）
-    private_key = os.environ["BOX_PRIVATE_KEY"]
-    # \n リテラルを実際の改行に変換
+    private_key   = os.environ["BOX_PRIVATE_KEY"]
     if "\\n" in private_key:
         private_key = private_key.replace("\\n", "\n")
-    # ヘッダー・フッターの前後にも改行を確保
     private_key = private_key.strip()
     if not private_key.endswith("\n"):
         private_key = private_key + "\n"
-    passphrase    = os.environ["BOX_PRIVATE_KEY_PASSPHRASE"].encode()
+    passphrase = os.environ["BOX_PRIVATE_KEY_PASSPHRASE"].encode()
 
-    # Private Keyを読み込む
     key = load_pem_private_key(private_key.encode(), password=passphrase)
 
-    # JWTアサーションを作成
     now = int(time.time())
     claims = {
         "iss": client_id,
@@ -72,12 +66,11 @@ def get_box_access_token() -> str:
         headers={"kid": public_key_id},
     )
 
-    # Access Tokenを取得
     res = requests.post(
         "https://api.box.com/oauth2/token",
         data={
-            "grant_type":  "urn:ietf:params:oauth:grant-type:jwt-bearer",
-            "assertion":   assertion,
+            "grant_type":    "urn:ietf:params:oauth:grant-type:jwt-bearer",
+            "assertion":     assertion,
             "client_id":     client_id,
             "client_secret": client_secret,
         },
@@ -119,13 +112,12 @@ def fetch_ai_news_via_newsapi() -> list[dict] | None:
         return None
 
 
-# ---- ② Claude でマークダウン生成 ----
+# ---- ② Gemini でマークダウン生成 ----
 def generate_markdown(articles: list[dict] | None) -> str:
-    client   = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    genai.configure(api_key=os.environ["GEMINI_API_KEY"])
     today_jp = datetime.now(JST).strftime("%Y年%m月%d日")
     now_str  = datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
 
-    # 共通のシステムコンテキスト
     system_context = """あなたはBox Japan・エンタープライズSaaS領域の専門アナリストです。
 
 【読者】
@@ -139,6 +131,7 @@ def generate_markdown(articles: list[dict] | None) -> str:
 4. 技術トレンドの重要度：LLM新モデル・AI Agent・RAGなどエンタープライズ活用に直結するか"""
 
     if articles:
+        # NewsAPIのデータを使って要約生成
         articles_text = "\n".join(
             f"- {a['title']} ({a['source']})\n  概要: {a['description']}\n  URL: {a['url']}"
             for a in articles
@@ -179,13 +172,12 @@ Box Consultingとして今週・今月注目すべきトレンドを3〜4行で�
 ---
 *{now_str} / Box Consulting AI Digest*"""
 
-        message = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=3000,
-            messages=[{"role": "user", "content": prompt}],
-        )
+        model = genai.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(prompt)
+
     else:
-        prompt = f"""今日（{today_jp}）の過去24時間のAI・SaaS関連ニュースを調査し、まとめてください。
+        # NewsAPIなし → Gemini Grounding（Google検索）でニュース収集も兼ねる
+        prompt = f"""今日（{today_jp}）の過去24時間のAI・SaaS関連ニュースをGoogle検索で調査し、まとめてください。
 
 {system_context}
 
@@ -214,16 +206,14 @@ Box Consultingとして今週・今月注目すべきトレンドを3〜4行で�
 ---
 *{now_str} / Box Consulting AI Digest*"""
 
-        message = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=3000,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": prompt}],
+        # Grounding with Google Search を有効化
+        model = genai.GenerativeModel(
+            "gemini-2.0-flash",
+            tools="google_search_retrieval",
         )
+        response = model.generate_content(prompt)
 
-    return "\n".join(
-        block.text for block in message.content if block.type == "text"
-    ).strip()
+    return response.text.strip()
 
 
 # ---- ③ Box に保存 ----
@@ -231,7 +221,7 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
     content = markdown.encode("utf-8")
     headers = {
         "Authorization": f"Bearer {access_token}",
-        "As-User": os.environ["BOX_USER_ID"],  # サービスアカウントのユーザーIDとして操作
+        "As-User": os.environ["BOX_USER_ID"],
     }
     attrs = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
 
@@ -304,10 +294,10 @@ def main():
 
     print("🔍 ニュース収集中...")
     articles = fetch_ai_news_via_newsapi()
-    source = "NewsAPI" if articles else "Claude web_search"
+    source = "NewsAPI" if articles else "Gemini Grounding（Google検索）"
     print(f"   ソース: {source} | 件数: {len(articles) if articles else 'N/A'}")
 
-    print("✍️  マークダウン生成中...")
+    print("✍️  マークダウン生成中（Gemini）...")
     markdown = generate_markdown(articles)
     print("--- 生成内容プレビュー ---")
     print(markdown[:400], "\n...")
