@@ -7,7 +7,7 @@ AI News Daily Bot
   - Refresh Token不要・永続的に動作
 
 【必要な環境変数（GitHub Secrets）】
-  GEMINI_API_KEY          : Google Gemini APIキー（必須）
+  ANTHROPIC_API_KEY       : Anthropic APIキー（必須）
   BOX_CLIENT_ID           : BoxアプリのClient ID（必須）
   BOX_CLIENT_SECRET       : BoxアプリのClient Secret（必須）
   BOX_ENTERPRISE_ID       : BoxのEnterprise ID（必須）
@@ -26,8 +26,7 @@ import requests
 import jwt  # PyJWT
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from datetime import datetime, timedelta, timezone
-from google import genai                        # 新SDK
-from google.genai import types
+import anthropic
 
 JST = timezone(timedelta(hours=9))
 BOX_ARCHIVE_FOLDER_ID = os.environ.get("BOX_ARCHIVE_FOLDER_ID", "370318355595")
@@ -105,9 +104,9 @@ def fetch_ai_news_via_newsapi() -> list[dict] | None:
         return None
 
 
-# ---- ② Gemini でマークダウン生成 ----
+# ---- ② Claude Haiku でマークダウン生成 ----
 def generate_markdown(articles: list[dict] | None) -> str:
-    client   = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+    client   = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     today_jp = datetime.now(JST).strftime("%Y年%m月%d日")
     now_str  = datetime.now(JST).strftime("%Y-%m-%d %H:%M JST")
 
@@ -165,13 +164,14 @@ Box Consultingとして今週・今月注目すべきトレンドを3〜4行で�
 
 {output_format}"""
 
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt,
+        message = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=3000,
+            messages=[{"role": "user", "content": prompt}],
         )
     else:
-        # NewsAPIなし → Google検索グラウンディングでニュース収集も兼ねる
-        prompt = f"""今日（{today_jp}）の過去24時間のAI・SaaS関連ニュースをGoogle検索で調査し、まとめてください。
+        # NewsAPIなし → web_search でニュース収集も兼ねる
+        prompt = f"""今日（{today_jp}）の過去24時間のAI・SaaS関連ニュースを調査し、まとめてください。
 
 {system_context}
 
@@ -184,15 +184,16 @@ Box Consultingとして今週・今月注目すべきトレンドを3〜4行で�
 
 {output_format}"""
 
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                tools=[types.Tool(google_search=types.GoogleSearch())],
-            ),
+        message = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=3000,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=[{"role": "user", "content": prompt}],
         )
 
-    return response.text.strip()
+    return "\n".join(
+        block.text for block in message.content if block.type == "text"
+    ).strip()
 
 
 # ---- ③ Box に保存 ----
@@ -272,10 +273,10 @@ def main():
 
     print("🔍 ニュース収集中...")
     articles = fetch_ai_news_via_newsapi()
-    source = "NewsAPI" if articles else "Gemini Grounding（Google検索）"
+    source = "NewsAPI" if articles else "Claude web_search"
     print(f"   ソース: {source} | 件数: {len(articles) if articles else 'N/A'}")
 
-    print("✍️  マークダウン生成中（Gemini）...")
+    print("✍️  マークダウン生成中（Claude Haiku）...")
     markdown = generate_markdown(articles)
     print("--- 生成内容プレビュー ---")
     print(markdown[:400], "\n...")
