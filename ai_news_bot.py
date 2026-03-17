@@ -81,12 +81,14 @@ def fetch_ai_news_via_newsapi() -> list[dict] | None:
         return None
     print(f"   ℹ️ NEWS_API_KEY 確認済み（末尾4文字: ...{api_key[-4:]}）")
 
-    yesterday = (datetime.now(JST) - timedelta(days=1)).strftime("%Y-%m-%d")
+    # 過去2日分を取得（当日分が遅延反映されることがあるため）
+    two_days_ago = (datetime.now(JST) - timedelta(days=2)).strftime("%Y-%m-%d")
     url = (
         "https://newsapi.org/v2/everything"
-        "?q=AI OR 人工知能 OR LLM OR 生成AI OR ChatGPT OR Claude OR Gemini"
-        f"&from={yesterday}&sortBy=popularity&pageSize=20&apiKey={api_key}"
+        "?q=AI OR LLM OR 生成AI OR ChatGPT OR Claude OR Gemini OR OpenAI OR Anthropic"
+        f"&from={two_days_ago}&sortBy=publishedAt&pageSize=20&language=en&apiKey={api_key}"
     )
+    print(f"   🔍 検索期間: {two_days_ago} 〜")
     try:
         res = requests.get(url, timeout=10)
         print(f"   📡 NewsAPI応答: {res.status_code}")
@@ -132,17 +134,17 @@ def generate_markdown(articles: list[dict] | None) -> str:
 4. 技術トレンドの重要度：LLM新モデル・AI Agent・RAGなどエンタープライズ活用に直結するか"""
 
     output_format = f"""【出力フォーマット（厳守）】
-# 📰 AI & SaaS Daily — {today_jp}
+# AI & SaaS Daily — {today_jp}
 
 ## 1. [ニュースタイトル（日本語・30文字以内）]
-**概要:** 何が起きたか2文以内で端的に。
+**概要:** 何が起きたか4文以内で端的に。
 **Box/提案への示唆:** 商談・提案で使えるポイント、またはBoxへの影響を1〜2文で。
 **ソース:** [媒体名](URL)
 
 （## 2. 〜 ## 5. も同じ形式）
 
 ---
-### 💡 今日のポイント
+### 今日のポイント
 Box Consultingとして今週・今月注目すべきトレンドを3〜4行で総括。
 「〇〇という流れが加速しており、□□な提案機会につながる」という形式で締める。
 
