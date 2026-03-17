@@ -166,7 +166,7 @@ Box Consultingとして今週・今月注目すべきトレンドを3〜4行で�
 {output_format}"""
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-1.5-flash",
             contents=prompt,
         )
     else:
@@ -185,7 +185,7 @@ Box Consultingとして今週・今月注目すべきトレンドを3〜4行で�
 {output_format}"""
 
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-1.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 tools=[types.Tool(google_search=types.GoogleSearch())],
