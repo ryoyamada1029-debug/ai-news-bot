@@ -172,7 +172,6 @@ Box Consultingとして今週・今月注目すべきトレンドを3〜4行で�
             messages=[{"role": "user", "content": prompt}],
         )
     else:
-        # NewsAPIなし → web_search でニュース収集も兼ねる
         prompt = f"""今日（{today_jp}）の過去24時間のAI・SaaS関連ニュースを調査し、まとめてください。
 
 {system_context}
@@ -207,6 +206,9 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
     }
     attrs = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
 
+    print(f"   📋 保存先フォルダID: {BOX_ARCHIVE_FOLDER_ID}")
+    print(f"   👤 BOX_USER_ID 末尾4桁: ...{os.environ.get('BOX_USER_ID', '')[-4:]}")
+
     res = requests.post(
         "https://upload.box.com/api/2.0/files/content",
         headers=headers,
@@ -216,7 +218,7 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
         },
         timeout=30,
     )
-    print(f"   Box upload response: {res.status_code} | {res.text[:300]}")
+    print(f"   📡 Box応答: {res.status_code} | {res.text[:300]}")
 
     if res.status_code == 409:
         print("   同名ファイルあり → 上書き中...")
@@ -260,8 +262,6 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
                 timeout=30,
             )
 
-    if not res.ok:
-        print(f"   ⚠️ Box APIレスポンス ({res.status_code}): {res.text[:300]}")
     res.raise_for_status()
     file_id  = res.json()["entries"][0]["id"]
     file_url = f"https://app.box.com/file/{file_id}"
@@ -298,4 +298,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
