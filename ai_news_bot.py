@@ -89,9 +89,14 @@ def fetch_ai_news_via_newsapi() -> list[dict] | None:
     )
     try:
         res = requests.get(url, timeout=10)
-        res.raise_for_status()
-        articles = res.json().get("articles", [])
-        return [
+        print(f"   📡 NewsAPI応答: {res.status_code}")
+        if not res.ok:
+            print(f"   ⚠️ NewsAPI エラー: {res.status_code} | {res.text[:200]}")
+            return None
+        data = res.json()
+        print(f"   📰 NewsAPI status: {data.get(chr(115)+chr(116)+chr(97)+chr(116)+chr(117)+chr(115))} | 件数: {data.get(chr(116)+chr(111)+chr(116)+chr(97)+chr(108)+chr(82)+chr(101)+chr(115)+chr(117)+chr(108)+chr(116)+chr(115))}")
+        articles = data.get("articles", [])
+        result = [
             {
                 "title": a["title"],
                 "url": a["url"],
@@ -101,8 +106,10 @@ def fetch_ai_news_via_newsapi() -> list[dict] | None:
             for a in articles[:15]
             if a.get("title") and "[Removed]" not in a.get("title", "")
         ]
+        print(f"   ✅ 有効記事数: {len(result)}")
+        return result if result else None
     except Exception as e:
-        print(f"   ⚠️ NewsAPI エラー詳細: {e}")
+        print(f"   ⚠️ NewsAPI 例外: {type(e).__name__}: {e}")
         return None
 
 
@@ -172,6 +179,7 @@ Box Consultingとして今週・今月注目すべきトレンドを3〜4行で�
             messages=[{"role": "user", "content": prompt}],
         )
     else:
+        # NewsAPIなし → web_search でニュース収集も兼ねる
         prompt = f"""今日（{today_jp}）の過去24時間のAI・SaaS関連ニュースを調査し、まとめてください。
 
 {system_context}
@@ -206,9 +214,6 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
     }
     attrs = f'{{"name":"{filename}","parent":{{"id":"{BOX_ARCHIVE_FOLDER_ID}"}}}}'
 
-    print(f"   📋 保存先フォルダID: {BOX_ARCHIVE_FOLDER_ID}")
-    print(f"   👤 BOX_USER_ID 末尾4桁: ...{os.environ.get('BOX_USER_ID', '')[-4:]}")
-
     res = requests.post(
         "https://upload.box.com/api/2.0/files/content",
         headers=headers,
@@ -218,7 +223,7 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
         },
         timeout=30,
     )
-    print(f"   📡 Box応答: {res.status_code} | {res.text[:300]}")
+    print(f"   Box upload response: {res.status_code} | {res.text[:300]}")
 
     if res.status_code == 409:
         print("   同名ファイルあり → 上書き中...")
@@ -262,6 +267,8 @@ def save_to_box(markdown: str, filename: str, access_token: str) -> str:
                 timeout=30,
             )
 
+    if not res.ok:
+        print(f"   ⚠️ Box APIレスポンス ({res.status_code}): {res.text[:300]}")
     res.raise_for_status()
     file_id  = res.json()["entries"][0]["id"]
     file_url = f"https://app.box.com/file/{file_id}"
